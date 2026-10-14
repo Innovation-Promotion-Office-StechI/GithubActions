@@ -12,7 +12,8 @@ Git / GitHub / GitHub Actions によるブランチ戦略と CI/CD プロセス�
 5. [各手順](#各手順)
 6. [異常系の確認方法](#異常系の確認方法)
 7. [Actions ログと Artifact の確認方法](#actions-ログと-artifact-の確認方法)
-8. [検証後の整理](#検証後の整理)
+8. [切り戻し手順](#切り戻し手順)
+9. [検証後の整理](#検証後の整理)
 
 ## 前提条件
 
@@ -167,6 +168,48 @@ git push -u origin hotfix/critical-fix
 4. run の **Summary** 画面で、判定結果の表と、下部の **Artifacts** 欄を確認
    - CI：`ci-build-pr<PR番号>-<run_id>`
    - デプロイ：`deploy-<environment>-v<version>-<run_id>`（`manifest.json` と `app/` が入っています）
+
+## 切り戻し手順
+
+主要ブランチの履歴の巻き戻し（`reset` ＋ force push）と、主要ブランチの削除は Ruleset で禁止されています。
+切り戻しは、**変更を打ち消すコミット（revert）を PR でマージする**ことで行います。
+
+> PR 画面の **Revert** ボタンは使えません。自動で作られるブランチ名（`revert-<PR番号>-<ブランチ名>`）は許可された起点ではないため、`ci-branch-policy` が失敗してマージできません。
+
+### develop を戻す場合
+
+```bash
+git switch develop
+git pull
+git switch -c hotfix/revert-<内容>
+# マージコミットを打ち消す場合は -m 1（取り込んだ側を取り消す）を付ける
+git revert -m 1 <打ち消したいマージコミット>
+git push -u origin hotfix/revert-<内容>
+```
+
+画面で `base: develop` ← `compare: hotfix/revert-<内容>` の PR を作成 → CI 成功を確認 → マージ。
+
+### staging / usertest / main を戻す場合
+
+main のタグ（`vX.Y.Z`）は付け直せないため、**打ち消した内容を新しいバージョンとして出し直します**。
+
+```bash
+git switch main
+git pull
+git switch -c hotfix/revert-<内容>
+git revert -m 1 <打ち消したいマージコミット>
+git push -u origin hotfix/revert-<内容>
+
+git switch -c release/v<X.Y.Z+1>
+# VERSION を X.Y.Z+1 に変更して commit
+git push -u origin release/v<X.Y.Z+1>
+```
+
+1. `hotfix/revert-<内容>` → `develop` の PR を作成・マージ（develop にも打ち消しを反映し、次のリリースで戻した変更が再び入らないようにする）
+2. `release/v<X.Y.Z+1>` → `staging`、`staging` → `usertest`、`staging` → `main` の順に PR を作成・マージ（main はデプロイの承認が必要）
+3. main へのマージ後、タグ `v<X.Y.Z+1>` が自動で付与される
+
+> develop 側の PR でコンフリクトや CI 失敗が起きた場合は、`hotfix/revert-<内容>` に develop を取り込まず、develop から別のブランチ（例 `hotfix/revert-<内容>-develop`）を作って調整してください。hotfix ブランチに develop を取り込むと、未リリースの変更が main に入ります。
 
 ## 検証後の整理
 
