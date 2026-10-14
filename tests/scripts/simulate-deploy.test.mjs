@@ -56,8 +56,11 @@ test('build → simulateDeploy で deployment/<env>/ に app と manifest.json �
     const distDir = join(work, 'dist');
     const info = build({ root, outDir: distDir, commitSha: input.commitSha, now: new Date('2026-10-14T00:00:00Z') });
     assert.equal(info.builtAt, '2026-10-14T00:00:00Z');
+    // バージョンは固定値ではなく VERSION ファイルの値を使う（VERSION を上げてもテストが壊れないように）
+    const version = readFileSync(join(root, 'VERSION'), 'utf8').trim();
+    assert.equal(info.version, version);
 
-    const envDir = simulateDeploy({ distDir, outRoot: join(work, 'deployment'), manifest: buildManifest(input) });
+    const envDir = simulateDeploy({ distDir, outRoot: join(work, 'deployment'), manifest: buildManifest({ ...input, version }) });
     assert.equal(envDir, join(work, 'deployment', 'main'));
     assert.ok(existsSync(join(envDir, 'app', 'frontend', 'greeting.mjs')));
     assert.ok(existsSync(join(envDir, 'app', 'backend', 'calc.mjs')));
