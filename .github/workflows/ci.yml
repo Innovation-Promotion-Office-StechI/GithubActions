@@ -1,0 +1,78 @@
+# CI：PR 作成・更新時に実行する
+# ジョブ名（name）は Ruleset の Required status checks に登録するため変更しないこと
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: ci-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ci-lint:
+    name: ci-lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm run lint
+
+  ci-test:
+    name: ci-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm test
+
+  ci-build:
+    name: ci-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm run build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ci-build-pr${{ github.event.pull_request.number }}-${{ github.run_id }}
+          path: dist/
+          retention-days: 3
+          if-no-files-found: error
+
+  ci-branch-policy:
+    name: ci-branch-policy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # base/head は GITHUB_BASE_REF / GITHUB_HEAD_REF からスクリプト内で読む（式展開でシェルに埋め込まない）
+      - name: ブランチポリシー判定（段階1）
+        run: node scripts/resolve-deploy-target.mjs --mode ci

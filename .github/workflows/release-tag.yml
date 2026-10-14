@@ -1,0 +1,60 @@
+# タグ付与（deploy.yml から呼び出す再利用 workflow）
+# GITHUB_TOKEN で作成したタグは他の workflow を起動しないため、後続処理が必要な場合は同じ run 内に追加すること
+name: Release Tag
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: VERSION の値（X.Y.Z）
+        required: true
+        type: string
+      sha:
+        description: タグを付けるコミット（マージコミット）
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  create-tag:
+    name: create-tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+      - name: タグ v<VERSION> を作成して push
+        env:
+          VERSION: ${{ inputs.version }}
+          TARGET_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::VERSION の形式が不正です: $VERSION"
+            exit 1
+          fi
+          TAG="v$VERSION"
+          if existing=$(git rev-parse -q --verify "refs/tags/$TAG^{commit}"); then
+            if [ "$existing" = "$TARGET_SHA" ]; then
+              echo "::notice::タグ $TAG は既に $TARGET_SHA を指しているため作成をスキップします"
+              exit 0
+            fi
+            echo "::error::タグ $TAG は別のコミット（$existing）を指しています"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG" "$TARGET_SHA"
+          git push origin "refs/tags/$TAG"
+          echo "タグ $TAG を $TARGET_SHA に付与しました"
+          {
+            echo "### タグ付与"
+            echo ""
+            echo "| タグ | コミット |"
+            echo "|---|---|"
+            echo "| $TAG | $TARGET_SHA |"
+          } >> "$GITHUB_STEP_SUMMARY"

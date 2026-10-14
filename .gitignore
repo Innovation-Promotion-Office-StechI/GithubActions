@@ -1,0 +1,5 @@
+node_modules/
+dist/
+artifacts/
+# デプロイ相当処理で生成される環境別ディレクトリ（deployment/README.md は管理対象）
+deployment/*/

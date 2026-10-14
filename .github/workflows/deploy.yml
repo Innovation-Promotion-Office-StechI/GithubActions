@@ -1,0 +1,96 @@
+# デプロイ相当処理：PR クローズ時に実行する
+#   resolve … 段階1（ブランチ判定）＋段階2（API でゲート検査）。未マージ・対象外は理由を出して skip
+#   deploy  … deployment/<env>/ への配置・マニフェスト生成・Artifact 保存（実デプロイはしない）
+#   tag     … main の場合のみ v<VERSION> タグを付与（release-tag.yml）
+name: Deploy
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions: {}
+
+concurrency:
+  group: deploy-${{ github.event.pull_request.base.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    outputs:
+      deploy: ${{ steps.resolve.outputs.deploy }}
+      environment: ${{ steps.resolve.outputs.environment }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      reason: ${{ steps.resolve.outputs.reason }}
+      gate: ${{ steps.resolve.outputs.gate }}
+    steps:
+      # マージ済みならマージコミット、未マージなら base 側（信頼できるコード）を使う
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.merged && github.event.pull_request.merge_commit_sha || github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - id: resolve
+        name: デプロイ先判定（段階1・段階2）
+        run: node scripts/resolve-deploy-target.mjs --mode deploy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  deploy:
+    name: deploy
+    needs: resolve
+    if: needs.resolve.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ needs.resolve.outputs.environment }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm run build
+        env:
+          BUILD_COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+      - name: デプロイ相当処理（配置・マニフェスト生成）
+        run: node scripts/simulate-deploy.mjs
+        env:
+          DEPLOY_ENVIRONMENT: ${{ needs.resolve.outputs.environment }}
+          DEPLOY_VERSION: ${{ needs.resolve.outputs.version }}
+          DEPLOY_REASON: ${{ needs.resolve.outputs.reason }}
+          DEPLOY_GATE: ${{ needs.resolve.outputs.gate }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deploy-${{ needs.resolve.outputs.environment }}-v${{ needs.resolve.outputs.version }}-${{ github.run_id }}
+          path: deployment/${{ needs.resolve.outputs.environment }}/
+          retention-days: 14
+          if-no-files-found: error
+
+  tag:
+    name: tag
+    needs: [resolve, deploy]
+    if: needs.resolve.outputs.environment == 'main'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-tag.yml
+    with:
+      version: ${{ needs.resolve.outputs.version }}
+      sha: ${{ github.event.pull_request.merge_commit_sha }}
